@@ -968,7 +968,7 @@
     async function stitchAndCompress(files) {
       const images = await Promise.all([...files].map(loadImageFromFile));
       const gap = 8;
-      const maxW = 1200;
+      const maxW = 1600;
       let totalH = 0;
       let drawW = 0;
       const scaled = images.map((img) => {
@@ -1183,34 +1183,145 @@
     }
 
     // ——— OCR (user-initiated only) ———
+    function otsuThreshold(histogram, total) {
+      let sum = 0;
+      for (let i = 0; i < 256; i++) sum += i * histogram[i];
+      let sumB = 0;
+      let wB = 0;
+      let wF = 0;
+      let maxVar = 0;
+      let threshold = 180;
+      for (let t = 0; t < 256; t++) {
+        wB += histogram[t];
+        if (!wB) continue;
+        wF = total - wB;
+        if (!wF) break;
+        sumB += t * histogram[t];
+        const mB = sumB / wB;
+        const mF = (sum - sumB) / wF;
+        const variance = wB * wF * (mB - mF) ** 2;
+        if (variance > maxVar) {
+          maxVar = variance;
+          threshold = t;
+        }
+      }
+      return threshold;
+    }
+
+    function findReceiptInkBounds(imageData) {
+      const { width, height, data } = imageData;
+      let minX = width;
+      let minY = height;
+      let maxX = 0;
+      let maxY = 0;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const i = (y * width + x) * 4;
+          const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+          if (gray < 238) {
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+          }
+        }
+      }
+      if (maxX <= minX || maxY <= minY) return null;
+      const pad = Math.round(Math.min(width, height) * 0.02);
+      return {
+        x: Math.max(0, minX - pad),
+        y: Math.max(0, minY - pad),
+        w: Math.min(width, maxX - minX + pad * 2),
+        h: Math.min(height, maxY - minY + pad * 2),
+      };
+    }
+
     async function preprocessReceiptForOcr(blob) {
       const bitmap = await createImageBitmap(blob);
-      let w = bitmap.width;
-      let h = bitmap.height;
-      const minW = 1400;
+      let srcW = bitmap.width;
+      let srcH = bitmap.height;
+      let work = document.createElement('canvas');
+      work.width = srcW;
+      work.height = srcH;
+      const wctx = work.getContext('2d');
+      wctx.fillStyle = '#fff';
+      wctx.fillRect(0, 0, srcW, srcH);
+      wctx.drawImage(bitmap, 0, 0);
+      if (bitmap.close) bitmap.close();
+
+      if (srcW > srcH * 1.15) {
+        const rotated = document.createElement('canvas');
+        rotated.width = srcH;
+        rotated.height = srcW;
+        const rctx = rotated.getContext('2d');
+        rctx.fillStyle = '#fff';
+        rctx.fillRect(0, 0, rotated.width, rotated.height);
+        rctx.translate(rotated.width, 0);
+        rctx.rotate(Math.PI / 2);
+        rctx.drawImage(work, 0, 0);
+        work = rotated;
+        srcW = work.width;
+        srcH = work.height;
+      }
+
+      let imageData = work.getContext('2d').getImageData(0, 0, srcW, srcH);
+      const bounds = findReceiptInkBounds(imageData);
+      if (bounds && bounds.w > srcW * 0.25 && bounds.h > srcH * 0.25) {
+        const crop = document.createElement('canvas');
+        crop.width = bounds.w;
+        crop.height = bounds.h;
+        crop.getContext('2d').putImageData(
+          work.getContext('2d').getImageData(bounds.x, bounds.y, bounds.w, bounds.h),
+          0,
+          0
+        );
+        work = crop;
+        srcW = bounds.w;
+        srcH = bounds.h;
+        imageData = work.getContext('2d').getImageData(0, 0, srcW, srcH);
+      }
+
+      const minW = 1800;
+      let w = srcW;
+      let h = srcH;
       if (w < minW) {
         const scale = minW / w;
         w = Math.round(w * scale);
         h = Math.round(h * scale);
       }
+      const maxH = 7000;
+      if (h > maxH) {
+        const scale = maxH / h;
+        w = Math.round(w * scale);
+        h = maxH;
+      }
+
       const canvas = document.createElement('canvas');
       canvas.width = w;
       canvas.height = h;
       const ctx = canvas.getContext('2d');
       ctx.fillStyle = '#fff';
       ctx.fillRect(0, 0, w, h);
-      ctx.drawImage(bitmap, 0, 0, w, h);
-      if (bitmap.close) bitmap.close();
-      const imageData = ctx.getImageData(0, 0, w, h);
-      const d = imageData.data;
-      for (let i = 0; i < d.length; i += 4) {
-        const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-        const boosted = gray < 150 ? Math.max(0, gray * 0.55) : Math.min(255, gray * 1.08 + 18);
-        d[i] = d[i + 1] = d[i + 2] = boosted;
+      ctx.drawImage(work, 0, 0, w, h);
+
+      const scaled = ctx.getImageData(0, 0, w, h);
+      const d = scaled.data;
+      const histogram = new Uint32Array(256);
+      const grays = new Uint8Array(w * h);
+      for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+        const gray = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+        grays[p] = gray;
+        histogram[gray]++;
       }
-      ctx.putImageData(imageData, 0, 0);
+      const threshold = otsuThreshold(histogram, w * h);
+      for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+        const v = grays[p] < threshold ? 0 : 255;
+        d[i] = d[i + 1] = d[i + 2] = v;
+      }
+      ctx.putImageData(scaled, 0, 0);
+
       return new Promise((resolve) => {
-        canvas.toBlob((b) => resolve(b || blob), 'image/jpeg', 0.92);
+        canvas.toBlob((b) => resolve(b || blob), 'image/png', 1);
       });
     }
 
@@ -1218,10 +1329,46 @@
       return (text || '')
         .replace(/\r/g, '\n')
         .replace(/[|¦]/g, ' ')
+        .replace(/[úùûü]/g, '£')
         .replace(/[Oo](?=\d)/g, '0')
+        .replace(/(\d)[oO](?=\d)/g, '$10')
         .replace(/(\d)[lI](?=\d)/g, '$11')
+        .replace(/\b[lI][.,](\d{2})\b/g, '1.$1')
+        .replace(/[lI](?=\d{1,2}[.,\s]\d{2}\b)/g, '£')
         .replace(/£\s+/g, '£')
         .replace(/\u00a0/g, ' ');
+    }
+
+    const TESS_RECEIPT_OPTS = {
+      preserve_interword_spaces: '1',
+      user_defined_dpi: '300',
+    };
+
+    async function recognizeReceiptPasses(ocrBlob, onProgress) {
+      const modes = ['4', '6', '11'];
+      let bestText = '';
+      let bestItems = [];
+      for (const mode of modes) {
+        const { data } = await Tesseract.recognize(ocrBlob, 'eng', {
+          ...TESS_RECEIPT_OPTS,
+          tessedit_pageseg_mode: mode,
+          logger: (m) => {
+            if (m.status === 'recognizing text' && onProgress) {
+              onProgress(mode, m.progress || 0);
+            }
+          },
+        });
+        const text = normalizeOcrText((data.text || '').trim());
+        const items = parseReceiptLineItems(text);
+        const score = items.length * 1000 + text.length;
+        const bestScore = bestItems.length * 1000 + bestText.length;
+        if (score > bestScore) {
+          bestText = text;
+          bestItems = items;
+        }
+        if (items.length >= 4) break;
+      }
+      return { text: bestText, items: bestItems };
     }
 
     async function runOcr() {
@@ -1230,27 +1377,10 @@
       $('ocrStatus').textContent = 'Reading receipt…';
       try {
         const ocrBlob = await preprocessReceiptForOcr(pendingReceiptBlob);
-        const { data } = await Tesseract.recognize(ocrBlob, 'eng', {
-          tessedit_pageseg_mode: '4',
-          preserve_interword_spaces: '1',
-          logger: (m) => {
-            if (m.status === 'recognizing text') {
-              $('ocrStatus').textContent = 'Reading receipt… ' + Math.round((m.progress || 0) * 100) + '%';
-            }
-          },
+        const { text, items } = await recognizeReceiptPasses(ocrBlob, (_mode, progress) => {
+          $('ocrStatus').textContent = 'Reading receipt… ' + Math.round(progress * 100) + '%';
         });
-        const text = normalizeOcrText((data.text || '').trim());
         lastOcrText = text;
-        let items = parseReceiptLineItems(text);
-        if (!items.length && pendingReceiptBlob) {
-          const fallback = await Tesseract.recognize(ocrBlob, 'eng', {
-            tessedit_pageseg_mode: '6',
-            preserve_interword_spaces: '1',
-          });
-          const text2 = normalizeOcrText((fallback.data.text || '').trim());
-          if (text2.length > text.length) lastOcrText = text + '\n' + text2;
-          items = parseReceiptLineItems(lastOcrText);
-        }
         renderOcrItemsList(items);
         if (text) {
           $('ocrStatus').textContent = items.length
@@ -1270,29 +1400,95 @@
     }
 
     const OCR_SKIP =
-      /^(total|sub\s*total|amount\s*due|balance|change|vat|card|visa|mastercard|amex|contactless|cash|auth|approved|thank|receipt|date|time|tel|www\.|http|store|sainsbury|tesco|asda|lidl|co-op|items?\s*pc)/i;
+      /^(total|sub\s*total|amount\s*due|balance|change|vat|card|visa|mastercard|amex|contactless|cash|auth|approved|thank|receipt|date|time|tel|www\.|http|store|sainsbury|tesco|asda|lidl|co-?op|items?\s*pc|debit|credit|pin|sale|shop|basket|member|till|operator|transaction|exchange|refund|served|seq|trns|aid|arc|mid|pan|panseq)/i;
+
+    const UK_SUPERMARKET =
+      /\b(aldi|tesco|sainsbury'?s?|asda|lidl|morrisons|waitrose|co-?op|iceland|m&s|marks\s*&\s*spencer|boots|greggs|heron|farmfoods|sir\s+robert)\b/i;
 
     function cleanReceiptLabel(raw) {
       return raw
         .replace(/\s+@\s*.*$/i, '')
         .replace(/\s+\d+\s*x\s+.*$/i, '')
-        .replace(/\s+[BN]\s*$/i, '')
+        .replace(/\s+[ABN]\s*$/i, '')
         .replace(/[^a-zA-Z0-9%&'’+\-.,\s]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
     }
 
-    function extractPriceFromLine(line) {
-      const normalized = line.replace(/£/g, ' ').trim();
-      const matches = [...normalized.matchAll(/(\d{1,4})[.,\s](\d{2})\b/g)];
-      if (!matches.length) return null;
-      const last = matches[matches.length - 1];
-      const price = Number(`${last[1]}.${last[2]}`);
+    function stripLeadingProductCode(s) {
+      return (s || '').replace(/^\d{4,6}\s+/, '').trim();
+    }
+
+    function normalizePriceLine(line) {
+      return (line || '')
+        .replace(/ú/gi, '£')
+        .replace(/\b[lI][.,](\d{2})\b/g, '1.$1')
+        .replace(/[lI](?=\s*\d{1,4}[.,\s]\d{2}\b)/g, '£')
+        .trim();
+    }
+
+    function isQuantitySubline(line) {
+      return (
+        /^\d+\s*x\s*(?:£|ú)?\s*\d/i.test(line) ||
+        /^\d+\s*x\s*$/i.test(line) ||
+        /^@\s*\d/i.test(line)
+      );
+    }
+
+    function isReceiptNoiseLine(line) {
+      if (OCR_SKIP.test(line)) return true;
+      if (isQuantitySubline(line)) return true;
+      if (/^(?:debit|credit)\s+card\b/i.test(line)) return true;
+      if (/^contactless\b|^chip\s+pin\b|^pin\s+verified/i.test(line)) return true;
+      if (/^vat\b/i.test(line)) return true;
+      if (/^gb\s*\d/i.test(line)) return true;
+      if (/^\d+\s*items?\b/i.test(line)) return true;
+      if (/^store\s*#|^trn\s*#/i.test(line)) return true;
+      if (UK_SUPERMARKET.test(line) && !/(?:£|ú)?\s*\d{1,4}[.,\s]\d{2}/.test(line)) return true;
+      return false;
+    }
+
+    function finalizeItemLabel(label) {
+      if (!label) return '';
+      let s = cleanReceiptLabel(stripLeadingProductCode(label));
+      const letters = (s.match(/[a-zA-Z]/g) || []).length;
+      if (letters < 3) return '';
+      if (/^(total|sub|balance|change|card|visa|debit|credit|contactless)/i.test(s)) return '';
+      if (/^\d+\s*x\b/i.test(s)) return '';
+      if (/^[xX]\s*\d/.test(s)) return '';
+      return s.slice(0, 72);
+    }
+
+    function extractUkRetailLine(line) {
+      const normalized = normalizePriceLine(line);
+      const priceAtEnd = normalized.match(
+        /(?:£\s*)?(\d{1,4})[.,\s](\d{2})\s*(?:[ABab]|£)?\s*$/i
+      );
+      if (!priceAtEnd) return null;
+      const price = Number(`${priceAtEnd[1]}.${priceAtEnd[2]}`);
       if (!Number.isFinite(price) || price <= 0 || price > 250) return null;
-      const labelRaw = normalized.slice(0, last.index).replace(/\s+[\d.]+\s*$/, '').trim();
-      const label = cleanReceiptLabel(labelRaw);
-      if (label.length < 2 || /^\d+$/.test(label)) return null;
-      return { label: label.slice(0, 72), price };
+      let before = normalized.slice(0, priceAtEnd.index).trim();
+      before = before.replace(/\s+\d{4,6}\s*$/, '').trim();
+      const label = stripLeadingProductCode(before);
+      if (!label || /^\d+\s*x\s/i.test(label)) return null;
+      return { label, price };
+    }
+
+    function extractStandalonePrice(line) {
+      const normalized = normalizePriceLine(line);
+      const m = normalized.match(/^(?:£\s*)?(\d{1,4})[.,\s](\d{2})\s*(?:[ABab])?\s*$/i);
+      if (!m) return null;
+      const price = Number(`${m[1]}.${m[2]}`);
+      return Number.isFinite(price) && price > 0 && price <= 250 ? price : null;
+    }
+
+    function extractDescriptionOnly(line) {
+      if (/(?:£|ú|l|I)\s*\d{1,4}[.,\s]\d{2}\s*$/.test(line)) return null;
+      if (/^\d{4,6}\s+\D/.test(line)) return stripLeadingProductCode(line);
+      const letters = (line.match(/[a-zA-Z]/g) || []).length;
+      if (letters < 4) return null;
+      if (isReceiptNoiseLine(line)) return null;
+      return cleanReceiptLabel(line);
     }
 
     function parseReceiptLineItems(text) {
@@ -1303,18 +1499,48 @@
         .filter((l) => l.length > 1);
       const items = [];
       const seen = new Set();
+      let pendingLabel = null;
+
       for (const line of lines) {
-        if (OCR_SKIP.test(line)) continue;
-        if (/^\d{1,2}[\/\-]\d{1,2}/.test(line)) continue;
-        if (/^(?:\d{2}:\d{2}|\*{3,})/.test(line)) continue;
-        const parsed = extractPriceFromLine(line);
-        if (!parsed) continue;
-        if (parsed.label.length > 60 && parsed.price < 2) continue;
-        const key = parsed.label.toLowerCase() + ':' + parsed.price;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        items.push(parsed);
-        if (items.length >= 40) break;
+        if (/^\d{1,2}[\/\-]\d{1,2}/.test(line) || /^(?:\d{2}:\d{2}|\*{3,})/.test(line)) continue;
+        if (isReceiptNoiseLine(line)) {
+          pendingLabel = null;
+          continue;
+        }
+
+        const parsed = extractUkRetailLine(line);
+        if (parsed) {
+          let label = parsed.label;
+          if (pendingLabel && finalizeItemLabel(label).length < 4) {
+            label = pendingLabel;
+          }
+          pendingLabel = null;
+          const finalLabel = finalizeItemLabel(label);
+          if (!finalLabel) continue;
+          const key = finalLabel.toLowerCase() + ':' + parsed.price;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          items.push({ label: finalLabel, price: parsed.price });
+          if (items.length >= 40) break;
+          continue;
+        }
+
+        const soloPrice = extractStandalonePrice(line);
+        if (soloPrice != null && pendingLabel) {
+          const finalLabel = finalizeItemLabel(pendingLabel);
+          if (finalLabel) {
+            const key = finalLabel.toLowerCase() + ':' + soloPrice;
+            if (!seen.has(key)) {
+              seen.add(key);
+              items.push({ label: finalLabel, price: soloPrice });
+            }
+          }
+          pendingLabel = null;
+          continue;
+        }
+
+        const descOnly = extractDescriptionOnly(line);
+        pendingLabel = descOnly || null;
       }
       return items;
     }
@@ -1346,24 +1572,42 @@
       });
     }
 
+    function pickShopFromOcr(lines) {
+      for (const l of lines.slice(0, 14)) {
+        const m = l.match(UK_SUPERMARKET);
+        if (m) {
+          let shop = m[0].replace(/\s+/g, ' ').trim();
+          if (/^aldi$/i.test(shop)) shop = 'ALDI';
+          else shop = shop.charAt(0).toUpperCase() + shop.slice(1);
+          return shop.slice(0, 80);
+        }
+      }
+      return '';
+    }
+
+    function pickDefaultWhatItem(items) {
+      if (!items || !items.length) return null;
+      return (
+        items.find((it) => {
+          const letters = (it.label.match(/[a-zA-Z]/g) || []).length;
+          return letters >= 5 && !/^\d/.test(it.label);
+        }) || items[0]
+      );
+    }
+
     function applyOcrHeuristics(text, items) {
-      const amountMatch = text.match(/(?:^|\n)\s*(?:total|amount due|balance)\s*[:\s]*£?\s*(\d+[.,]\d{2})/im)
-        || text.match(/£\s*(\d+[.,]\d{2})/);
+      const amountMatch =
+        text.match(/(?:^|\n)\s*(?:total|amount\s*due|balance)\s*[:\s]*(?:£|ú)?\s*(\d+[.,]\d{2})/im) ||
+        text.match(/(?:^|\n)\s*total\s+(\d+[.,]\d{2})/im);
       if (amountMatch) {
         const raw = (amountMatch[1] || '').replace(',', '.');
         if (raw && !$('amount').value) $('amount').value = raw;
       }
       const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-      const shopLine = lines.find(
-        (l) =>
-          l.length > 3 &&
-          l.length < 42 &&
-          !/^\d/.test(l) &&
-          !/(\d{1,4})[.,]\d{2}\s*$/.test(l) &&
-          !OCR_SKIP.test(l)
-      );
-      if (shopLine && !$('shop').value) $('shop').value = shopLine.slice(0, 80);
-      if (!$('what').value && items && items[0]) $('what').value = items[0].label;
+      const shop = pickShopFromOcr(lines);
+      if (shop && !$('shop').value) $('shop').value = shop;
+      const defaultItem = pickDefaultWhatItem(items);
+      if (!$('what').value && defaultItem) $('what').value = defaultItem.label;
 
       const cat = suggestCategory($('shop').value, $('what').value, text);
       setCategory(cat);
