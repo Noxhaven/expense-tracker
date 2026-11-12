@@ -1166,21 +1166,74 @@
     }
 
     // ——— OCR (user-initiated only) ———
+    async function preprocessReceiptForOcr(blob) {
+      const bitmap = await createImageBitmap(blob);
+      let w = bitmap.width;
+      let h = bitmap.height;
+      const minW = 1400;
+      if (w < minW) {
+        const scale = minW / w;
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      if (bitmap.close) bitmap.close();
+      const imageData = ctx.getImageData(0, 0, w, h);
+      const d = imageData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        const boosted = gray < 150 ? Math.max(0, gray * 0.55) : Math.min(255, gray * 1.08 + 18);
+        d[i] = d[i + 1] = d[i + 2] = boosted;
+      }
+      ctx.putImageData(imageData, 0, 0);
+      return new Promise((resolve) => {
+        canvas.toBlob((b) => resolve(b || blob), 'image/jpeg', 0.92);
+      });
+    }
+
+    function normalizeOcrText(text) {
+      return (text || '')
+        .replace(/\r/g, '\n')
+        .replace(/[|¦]/g, ' ')
+        .replace(/[Oo](?=\d)/g, '0')
+        .replace(/(\d)[lI](?=\d)/g, '$11')
+        .replace(/£\s+/g, '£')
+        .replace(/\u00a0/g, ' ');
+    }
+
     async function runOcr() {
       if (!pendingReceiptBlob) return;
       $('btnScan').disabled = true;
       $('ocrStatus').textContent = 'Reading receipt…';
       try {
-        const { data } = await Tesseract.recognize(pendingReceiptBlob, 'eng', {
+        const ocrBlob = await preprocessReceiptForOcr(pendingReceiptBlob);
+        const { data } = await Tesseract.recognize(ocrBlob, 'eng', {
+          tessedit_pageseg_mode: '4',
+          preserve_interword_spaces: '1',
           logger: (m) => {
             if (m.status === 'recognizing text') {
               $('ocrStatus').textContent = 'Reading receipt… ' + Math.round((m.progress || 0) * 100) + '%';
             }
           },
         });
-        const text = (data.text || '').trim();
+        const text = normalizeOcrText((data.text || '').trim());
         lastOcrText = text;
-        const items = parseReceiptLineItems(text);
+        let items = parseReceiptLineItems(text);
+        if (!items.length && pendingReceiptBlob) {
+          const fallback = await Tesseract.recognize(ocrBlob, 'eng', {
+            tessedit_pageseg_mode: '6',
+            preserve_interword_spaces: '1',
+          });
+          const text2 = normalizeOcrText((fallback.data.text || '').trim());
+          if (text2.length > text.length) lastOcrText = text + '\n' + text2;
+          items = parseReceiptLineItems(lastOcrText);
+        }
         renderOcrItemsList(items);
         if (text) {
           $('ocrStatus').textContent = items.length
@@ -1199,35 +1252,52 @@
       }
     }
 
-    const OCR_SKIP = /^(total|subtotal|balance|change|vat|card|visa|mastercard|amex|contactless|cash|auth|approved|thank|receipt|date|time|tel|www\.|http)/i;
-    const PRICE_TAIL = /[£]?\s*(\d+[.,]\d{2})\s*$/;
+    const OCR_SKIP =
+      /^(total|sub\s*total|amount\s*due|balance|change|vat|card|visa|mastercard|amex|contactless|cash|auth|approved|thank|receipt|date|time|tel|www\.|http|store|sainsbury|tesco|asda|lidl|co-op|items?\s*pc)/i;
+
+    function cleanReceiptLabel(raw) {
+      return raw
+        .replace(/\s+@\s*.*$/i, '')
+        .replace(/\s+\d+\s*x\s+.*$/i, '')
+        .replace(/\s+[BN]\s*$/i, '')
+        .replace(/[^a-zA-Z0-9%&'’+\-.,\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    function extractPriceFromLine(line) {
+      const normalized = line.replace(/£/g, ' ').trim();
+      const matches = [...normalized.matchAll(/(\d{1,4})[.,\s](\d{2})\b/g)];
+      if (!matches.length) return null;
+      const last = matches[matches.length - 1];
+      const price = Number(`${last[1]}.${last[2]}`);
+      if (!Number.isFinite(price) || price <= 0 || price > 250) return null;
+      const labelRaw = normalized.slice(0, last.index).replace(/\s+[\d.]+\s*$/, '').trim();
+      const label = cleanReceiptLabel(labelRaw);
+      if (label.length < 2 || /^\d+$/.test(label)) return null;
+      return { label: label.slice(0, 72), price };
+    }
 
     function parseReceiptLineItems(text) {
       if (!text) return [];
-      const lines = text.split('\n').map((l) => l.trim()).filter((l) => l.length > 2);
+      const lines = text
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 1);
       const items = [];
       const seen = new Set();
       for (const line of lines) {
         if (OCR_SKIP.test(line)) continue;
         if (/^\d{1,2}[\/\-]\d{1,2}/.test(line)) continue;
-        const m = line.match(/^(.+?)\s+£\s*(\d+[.,]\d{2})\s*$/);
-        let label;
-        let price;
-        if (m) {
-          label = m[1].replace(/\s+/g, ' ').trim();
-          price = Number(m[2].replace(',', '.'));
-        } else {
-          const m2 = line.match(/^(.+?)\s+(\d+[.,]\d{2})\s*$/);
-          if (!m2 || m2[1].length < 2) continue;
-          label = m2[1].replace(/\s+/g, ' ').trim();
-          price = Number(m2[2].replace(',', '.'));
-        }
-        if (label.length < 2 || label.length > 60 || !Number.isFinite(price) || price > 5000) continue;
-        const key = label.toLowerCase() + price;
+        if (/^(?:\d{2}:\d{2}|\*{3,})/.test(line)) continue;
+        const parsed = extractPriceFromLine(line);
+        if (!parsed) continue;
+        if (parsed.label.length > 60 && parsed.price < 2) continue;
+        const key = parsed.label.toLowerCase() + ':' + parsed.price;
         if (seen.has(key)) continue;
         seen.add(key);
-        items.push({ label, price });
-        if (items.length >= 25) break;
+        items.push(parsed);
+        if (items.length >= 40) break;
       }
       return items;
     }
@@ -1268,7 +1338,12 @@
       }
       const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
       const shopLine = lines.find(
-        (l) => l.length > 3 && l.length < 42 && !/^\d/.test(l) && !PRICE_TAIL.test(l) && !OCR_SKIP.test(l)
+        (l) =>
+          l.length > 3 &&
+          l.length < 42 &&
+          !/^\d/.test(l) &&
+          !/(\d{1,4})[.,]\d{2}\s*$/.test(l) &&
+          !OCR_SKIP.test(l)
       );
       if (shopLine && !$('shop').value) $('shop').value = shopLine.slice(0, 80);
       if (!$('what').value && items && items[0]) $('what').value = items[0].label;
