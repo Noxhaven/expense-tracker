@@ -751,6 +751,7 @@
     let lastOcrText = '';
     let viewDetailExpenseId = null;
     let viewReceiptObjectUrl = null;
+    let lightboxBlobUrl = null;
     /** Raw image files accumulated before stitching (long receipts). */
     let pendingSourceFiles = [];
     let undoBuffer = null;
@@ -803,7 +804,7 @@
     function openIDB() {
       if (idbReady) return idbReady;
       idbReady = new Promise((resolve, reject) => {
-        const req = indexedDB.open(IDB_NAME, 1);
+        const req = indexedDB.open(IDB_NAME, 2);
         req.onupgradeneeded = () => {
           const db = req.result;
           if (!db.objectStoreNames.contains(IDB_STORE)) {
@@ -816,11 +817,27 @@
       return idbReady;
     }
 
+    function receiptRecordToBlob(record) {
+      if (!record) return null;
+      if (record.data) {
+        return new Blob([record.data], { type: record.mime || 'image/jpeg' });
+      }
+      const legacy = record.blob;
+      if (legacy && legacy.size > 0) {
+        const type = legacy.type || 'image/jpeg';
+        return legacy.type ? legacy : new Blob([legacy], { type });
+      }
+      return null;
+    }
+
     async function putReceipt(id, blob) {
+      if (!blob || !blob.size) return;
+      const data = await blob.arrayBuffer();
+      const mime = blob.type || 'image/jpeg';
       const db = await openIDB();
       return new Promise((resolve, reject) => {
         const tx = db.transaction(IDB_STORE, 'readwrite');
-        tx.objectStore(IDB_STORE).put({ id, blob, createdAt: Date.now() });
+        tx.objectStore(IDB_STORE).put({ id, data, mime, createdAt: Date.now() });
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
       });
@@ -831,9 +848,15 @@
       return new Promise((resolve, reject) => {
         const tx = db.transaction(IDB_STORE, 'readonly');
         const req = tx.objectStore(IDB_STORE).get(id);
-        req.onsuccess = () => resolve(req.result ? req.result.blob : null);
+        req.onsuccess = () => resolve(receiptRecordToBlob(req.result));
         req.onerror = () => reject(req.error);
       });
+    }
+
+    function revokeThumbCache(id) {
+      const url = thumbCache.get(id);
+      if (url) URL.revokeObjectURL(url);
+      thumbCache.delete(id);
     }
 
     async function deleteReceipt(id) {
@@ -930,10 +953,11 @@
     async function deleteDraftReceiptIfNeeded() {
       if (!pendingReceiptId || !pendingReceiptIsDraft) return;
       const editId = $('editId').value;
-      const linked = editId && expenses.find((x) => x.id === editId)?.receiptId === pendingReceiptId;
-      if (!linked) {
+      const linkedEdit = editId && expenses.find((x) => x.id === editId)?.receiptId === pendingReceiptId;
+      const linkedSaved = expenses.some((ex) => ex.receiptId === pendingReceiptId);
+      if (!linkedEdit && !linkedSaved) {
         await deleteReceipt(pendingReceiptId);
-        thumbCache.delete(pendingReceiptId);
+        revokeThumbCache(pendingReceiptId);
       }
       pendingReceiptIsDraft = false;
     }
@@ -949,11 +973,28 @@
       $('receiptLightbox').classList.remove('open');
       $('receiptLightbox').setAttribute('aria-hidden', 'true');
       $('lightboxImg').src = '';
+      if (lightboxBlobUrl) {
+        URL.revokeObjectURL(lightboxBlobUrl);
+        lightboxBlobUrl = null;
+      }
     }
 
     async function openReceiptLightboxById(receiptId) {
-      const url = await thumbUrl(receiptId);
-      if (url) openReceiptLightbox(url);
+      if (!receiptId) return;
+      const blob = await getReceipt(receiptId);
+      if (!blob) {
+        $('ocrStatus').textContent = 'Receipt image missing — add again in Edit.';
+        return;
+      }
+      if (lightboxBlobUrl) URL.revokeObjectURL(lightboxBlobUrl);
+      lightboxBlobUrl = URL.createObjectURL(blob);
+      openReceiptLightbox(lightboxBlobUrl);
+    }
+
+    async function createReceiptDisplayUrl(receiptId) {
+      const blob = await getReceipt(receiptId);
+      if (!blob) return null;
+      return URL.createObjectURL(blob);
     }
 
     function renderReceiptPreview() {
@@ -968,8 +1009,12 @@
         </button>
         <button type="button" class="btn-view-receipt" id="btnReceiptViewFull">View full receipt</button>
       `;
-      $('btnReceiptThumb').addEventListener('click', () => openReceiptLightbox(pendingReceiptObjectUrl));
-      $('btnReceiptViewFull').addEventListener('click', () => openReceiptLightbox(pendingReceiptObjectUrl));
+      const openFull = () => {
+        if (pendingReceiptId) openReceiptLightboxById(pendingReceiptId);
+        else if (pendingReceiptObjectUrl) openReceiptLightbox(pendingReceiptObjectUrl);
+      };
+      $('btnReceiptThumb').addEventListener('click', openFull);
+      $('btnReceiptViewFull').addEventListener('click', openFull);
     }
 
     async function persistPendingReceiptToIDB() {
@@ -1186,14 +1231,20 @@
 
     const thumbCache = new Map();
 
-    async function thumbUrl(receiptId) {
+    async function thumbUrl(receiptId, forceFresh) {
       if (!receiptId) return null;
-      if (thumbCache.has(receiptId)) return thumbCache.get(receiptId);
-      const blob = await getReceipt(receiptId);
-      if (!blob) return null;
-      const url = URL.createObjectURL(blob);
-      thumbCache.set(receiptId, url);
+      if (!forceFresh && thumbCache.has(receiptId)) return thumbCache.get(receiptId);
+      revokeThumbCache(receiptId);
+      const url = await createReceiptDisplayUrl(receiptId);
+      if (url) thumbCache.set(receiptId, url);
       return url;
+    }
+
+    function bindReceiptThumbImg(img, receiptId) {
+      img.addEventListener('error', async () => {
+        const url = await thumbUrl(receiptId, true);
+        if (url) img.src = url;
+      });
     }
 
     function renderList() {
@@ -1246,6 +1297,8 @@
             const slot = li.querySelector('.thumb-slot');
             if (slot) {
               slot.innerHTML = `<img class="thumb-mini" src="${url}" alt="View receipt" loading="lazy" data-view-rid="${e.receiptId}" role="button" tabindex="0" />`;
+              const img = slot.querySelector('img');
+              if (img) bindReceiptThumbImg(img, e.receiptId);
             }
           });
         }
@@ -1344,21 +1397,24 @@
         viewReceiptObjectUrl = null;
       }
       if (e.receiptId) {
-        const blob = await getReceipt(e.receiptId);
-        if (blob) {
+        viewReceiptObjectUrl = await createReceiptDisplayUrl(e.receiptId);
+        if (viewReceiptObjectUrl) {
           receiptBlock.hidden = false;
-          viewReceiptObjectUrl = URL.createObjectURL(blob);
           $('viewReceiptPreview').innerHTML = `
             <button type="button" class="receipt-thumb-btn" id="btnViewDetailThumb" aria-label="View full receipt">
-              <img src="${viewReceiptObjectUrl}" alt="Receipt" />
+              <img src="${viewReceiptObjectUrl}" alt="Receipt" data-rid="${e.receiptId}" />
             </button>
             <button type="button" class="btn-view-receipt" id="btnViewDetailFull">View full receipt</button>
           `;
-          const openFull = () => openReceiptLightbox(viewReceiptObjectUrl);
+          const thumb = $('viewReceiptPreview').querySelector('img');
+          if (thumb) bindReceiptThumbImg(thumb, e.receiptId);
+          const openFull = () => openReceiptLightboxById(e.receiptId);
           $('btnViewDetailThumb').addEventListener('click', openFull);
           $('btnViewDetailFull').addEventListener('click', openFull);
         } else {
-          receiptBlock.hidden = true;
+          receiptBlock.hidden = false;
+          $('viewReceiptPreview').innerHTML =
+            '<p class="view-empty-hint">Receipt image not found on this device. Tap Edit to attach the photo again.</p>';
         }
       } else {
         receiptBlock.hidden = true;
@@ -1447,10 +1503,10 @@
         await putReceipt(rid, pendingReceiptBlob);
         if (existing && existing.receiptId && existing.receiptId !== rid) {
           await deleteReceipt(existing.receiptId);
-          thumbCache.delete(existing.receiptId);
+          revokeThumbCache(existing.receiptId);
         }
         receiptId = rid;
-        thumbCache.delete(rid);
+        revokeThumbCache(rid);
       }
 
       const entry = {

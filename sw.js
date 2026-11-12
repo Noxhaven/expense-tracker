@@ -1,5 +1,5 @@
 /* Expense Tracker — offline app shell. Data stays in localStorage / IndexedDB on the client. */
-const CACHE_NAME = 'expense-tracker-v3';
+const CACHE_NAME = 'expense-tracker-v4';
 const SHELL = ['./index.html', './manifest.webmanifest', './sw.js'];
 
 self.addEventListener('install', (event) => {
