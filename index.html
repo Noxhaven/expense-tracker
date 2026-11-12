@@ -351,46 +351,8 @@
       font-size: 1.4rem;
       line-height: 1;
     }
-    .ocr-items {
-      margin-top: 10px;
-      padding: 10px 12px;
-      background: var(--bg);
-      border-radius: 12px;
-      max-height: 160px;
-      overflow-y: auto;
-    }
-    .ocr-items h4 {
-      font-size: 0.8rem;
-      color: var(--muted);
-      margin-bottom: 8px;
-      font-weight: 600;
-    }
-    .ocr-items ul { list-style: none; }
-    .ocr-item {
-      display: flex;
-      justify-content: space-between;
-      gap: 8px;
-      padding: 8px 0;
-      border-bottom: 1px solid #e2e8f0;
-      font-size: 0.85rem;
-      cursor: pointer;
-      text-align: left;
-      width: 100%;
-      background: none;
-      color: inherit;
-    }
-    .ocr-item:last-child { border-bottom: none; }
-    .ocr-item span:last-child { color: var(--muted); flex-shrink: 0; }
     .thumb-mini { cursor: pointer; }
-    .btn-scan {
-      padding: 10px 16px;
-      border-radius: 12px;
-      background: var(--bg);
-      color: var(--text);
-      font-weight: 600;
-    }
-    .btn-scan:disabled { opacity: 0.5; }
-    .ocr-status { font-size: 0.85rem; color: var(--muted); margin-top: 6px; }
+    .receipt-status { font-size: 0.85rem; color: var(--muted); margin-top: 6px; }
 
     .btn-row {
       display: flex;
@@ -513,24 +475,12 @@
     }
     .view-meta { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
     .view-receipt-block { margin: 16px 0; }
-    .view-receipt-block h3,
-    .view-scan-block h3 {
+    .view-receipt-block h3 {
       font-size: 0.85rem;
       color: var(--muted);
       margin-bottom: 8px;
       font-weight: 600;
     }
-    .view-scan-block { margin-bottom: 16px; }
-    .view-scan-list { list-style: none; }
-    .view-scan-row {
-      display: flex;
-      justify-content: space-between;
-      gap: 8px;
-      padding: 10px 0;
-      border-bottom: 1px solid #f1f5f9;
-      font-size: 0.9rem;
-    }
-    .view-scan-row span:last-child { color: var(--muted); }
     .view-empty-hint { font-size: 0.85rem; color: var(--muted); margin-top: 8px; }
     .view-actions { display: flex; gap: 10px; margin-top: 8px; }
     #viewSheet { z-index: 65; }
@@ -682,16 +632,11 @@
         <label>Receipt</label>
         <div class="receipt-actions">
           <label for="fileInput" class="btn-ghost btn-pick-files" id="btnPickFiles">Add image</label>
-          <button type="button" class="btn-scan" id="btnScan" disabled>Scan</button>
           <button type="button" class="btn-remove-receipt" id="btnRemoveReceipt" hidden>Remove photo</button>
         </div>
         <input type="file" id="fileInput" accept="image/*,.heic,.heif" multiple />
         <div class="receipt-preview" id="receiptPreview"></div>
-        <p class="ocr-status" id="ocrStatus"></p>
-        <div class="ocr-items" id="ocrItemsBox" hidden>
-          <h4>Recognised from receipt</h4>
-          <ul id="ocrItemsList"></ul>
-        </div>
+        <p class="receipt-status" id="receiptStatus"></p>
       </div>
       <div class="btn-row">
         <button type="button" class="btn-ghost btn-danger" id="btnDeleteExpense" hidden>Delete</button>
@@ -716,11 +661,6 @@
       <h3>Receipt</h3>
       <div class="receipt-preview" id="viewReceiptPreview"></div>
     </div>
-    <div class="view-scan-block" id="viewScanBlock">
-      <h3>Scanned items</h3>
-      <ul class="view-scan-list" id="viewScanList"></ul>
-      <p class="view-empty-hint" id="viewScanEmpty" hidden>No line items were saved. Tap Edit to scan the receipt again.</p>
-    </div>
     <div class="view-actions">
       <button type="button" class="btn-pill btn-pill-edit" id="btnDetailEdit">Edit</button>
       <button type="button" class="btn-ghost" id="btnDetailClose" style="flex:1">Close</button>
@@ -737,7 +677,6 @@
     <img id="lightboxImg" src="" alt="Receipt full view" />
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <script>
     // ——— Category definitions ———
     const CATEGORIES = [
@@ -763,8 +702,6 @@
     let pendingReceiptId = null;
     /** Receipt saved to IndexedDB before expense Save (draft). */
     let pendingReceiptIsDraft = false;
-    let lastOcrItems = [];
-    let lastOcrText = '';
     let viewDetailExpenseId = null;
     let viewReceiptObjectUrl = null;
     let lightboxBlobUrl = null;
@@ -897,8 +834,8 @@
       { cat: 'entertainment', words: ['cinema', 'netflix', 'spotify', 'steam', 'ticket', 'theatre', 'game', 'disney'] },
     ];
 
-    function suggestCategory(shop, what, ocrText) {
-      const hay = `${shop} ${what} ${ocrText || ''}`.toLowerCase();
+    function suggestCategory(shop, what) {
+      const hay = `${shop} ${what}`.toLowerCase();
       for (const rule of CATEGORY_RULES) {
         if (rule.words.some((w) => hay.includes(w))) return rule.cat;
       }
@@ -1014,12 +951,6 @@
       });
     }
 
-    function clearOcrItemsUI() {
-      lastOcrItems = [];
-      $('ocrItemsList').innerHTML = '';
-      $('ocrItemsBox').hidden = true;
-    }
-
     async function deleteDraftReceiptIfNeeded() {
       if (!pendingReceiptId || !pendingReceiptIsDraft) return;
       const editId = $('editId').value;
@@ -1053,7 +984,7 @@
       if (!receiptId) return;
       const blob = await getReceipt(receiptId);
       if (!blob) {
-        $('ocrStatus').textContent = 'Receipt image missing — add again in Edit.';
+        $('receiptStatus').textContent = 'Receipt image missing — add again in Edit.';
         return;
       }
       if (lightboxBlobUrl) URL.revokeObjectURL(lightboxBlobUrl);
@@ -1107,10 +1038,8 @@
       pendingSourceFiles = [];
       receiptMarkedForRemoval = false;
       $('receiptPreview').innerHTML = '';
-      $('btnScan').disabled = true;
       $('btnRemoveReceipt').hidden = true;
-      $('ocrStatus').textContent = '';
-      clearOcrItemsUI();
+      $('receiptStatus').textContent = '';
     }
 
   async function removeReceiptPhoto() {
@@ -1131,24 +1060,21 @@
       pendingReceiptBlob = null;
       pendingReceiptId = null;
       pendingSourceFiles = [];
-      lastOcrText = '';
       $('receiptPreview').innerHTML = '';
-      $('btnScan').disabled = true;
       $('btnRemoveReceipt').hidden = true;
-      clearOcrItemsUI();
-      $('ocrStatus').textContent = 'Receipt photo removed. Save to keep this change.';
+      $('receiptStatus').textContent = 'Receipt photo removed. Save to keep this change.';
     }
 
     async function setPendingReceiptFromFiles(fileList) {
       const files = fileList ? Array.from(fileList) : [];
       if (!files.length) return;
-      $('ocrStatus').textContent = 'Saving receipt photo…';
+      $('receiptStatus').textContent = 'Saving receipt photo…';
       try {
         await deleteDraftReceiptIfNeeded();
         pendingSourceFiles.push(...files);
         const blob = await stitchAndCompress(pendingSourceFiles);
         if (!blob || !blob.size) {
-          $('ocrStatus').textContent = 'Could not save that photo — try Add image again or a smaller picture.';
+          $('receiptStatus').textContent = 'Could not save that photo — try Add image again or a smaller picture.';
           return;
         }
         pendingReceiptBlob = blob;
@@ -1157,18 +1083,17 @@
         pendingReceiptObjectUrl = URL.createObjectURL(blob);
         await persistPendingReceiptToIDB();
         renderReceiptPreview();
-        $('btnScan').disabled = false;
-        $('ocrStatus').textContent = 'Receipt ready — tap Save on the expense to keep it.';
+        $('receiptStatus').textContent = 'Receipt ready — tap Save on the expense to keep it.';
 
         const shop = $('shop').value;
         const what = $('what').value;
-        const suggested = suggestCategory(shop, what, '');
+        const suggested = suggestCategory(shop, what);
         if ($('categorySelect').value === 'other' || !$('categorySelect').value) {
           setCategory(suggested);
         }
       } catch (err) {
         console.error(err);
-        $('ocrStatus').textContent = 'Photo failed — tap Add image and try again.';
+        $('receiptStatus').textContent = 'Photo failed — tap Add image and try again.';
       }
     }
 
@@ -1180,193 +1105,6 @@
       } finally {
         input.value = '';
       }
-    }
-
-    // ——— OCR (user-initiated only) ———
-    async function preprocessReceiptForOcr(blob) {
-      const bitmap = await createImageBitmap(blob);
-      let w = bitmap.width;
-      let h = bitmap.height;
-      const minW = 1400;
-      if (w < minW) {
-        const scale = minW / w;
-        w = Math.round(w * scale);
-        h = Math.round(h * scale);
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(0, 0, w, h);
-      ctx.drawImage(bitmap, 0, 0, w, h);
-      if (bitmap.close) bitmap.close();
-      const imageData = ctx.getImageData(0, 0, w, h);
-      const d = imageData.data;
-      for (let i = 0; i < d.length; i += 4) {
-        const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-        const boosted = gray < 150 ? Math.max(0, gray * 0.55) : Math.min(255, gray * 1.08 + 18);
-        d[i] = d[i + 1] = d[i + 2] = boosted;
-      }
-      ctx.putImageData(imageData, 0, 0);
-      return new Promise((resolve) => {
-        canvas.toBlob((b) => resolve(b || blob), 'image/jpeg', 0.92);
-      });
-    }
-
-    function normalizeOcrText(text) {
-      return (text || '')
-        .replace(/\r/g, '\n')
-        .replace(/[|¦]/g, ' ')
-        .replace(/[Oo](?=\d)/g, '0')
-        .replace(/(\d)[lI](?=\d)/g, '$11')
-        .replace(/£\s+/g, '£')
-        .replace(/\u00a0/g, ' ');
-    }
-
-    async function runOcr() {
-      if (!pendingReceiptBlob) return;
-      $('btnScan').disabled = true;
-      $('ocrStatus').textContent = 'Reading receipt…';
-      try {
-        const ocrBlob = await preprocessReceiptForOcr(pendingReceiptBlob);
-        const { data } = await Tesseract.recognize(ocrBlob, 'eng', {
-          tessedit_pageseg_mode: '4',
-          preserve_interword_spaces: '1',
-          logger: (m) => {
-            if (m.status === 'recognizing text') {
-              $('ocrStatus').textContent = 'Reading receipt… ' + Math.round((m.progress || 0) * 100) + '%';
-            }
-          },
-        });
-        const text = normalizeOcrText((data.text || '').trim());
-        lastOcrText = text;
-        let items = parseReceiptLineItems(text);
-        if (!items.length && pendingReceiptBlob) {
-          const fallback = await Tesseract.recognize(ocrBlob, 'eng', {
-            tessedit_pageseg_mode: '6',
-            preserve_interword_spaces: '1',
-          });
-          const text2 = normalizeOcrText((fallback.data.text || '').trim());
-          if (text2.length > text.length) lastOcrText = text + '\n' + text2;
-          items = parseReceiptLineItems(lastOcrText);
-        }
-        renderOcrItemsList(items);
-        if (text) {
-          $('ocrStatus').textContent = items.length
-            ? `Found ${items.length} line item${items.length === 1 ? '' : 's'} — tap one to use it.`
-            : 'Scan done — check shop, amount, and category.';
-        } else {
-          $('ocrStatus').textContent = 'Could not read much — receipt photo is still saved.';
-        }
-        applyOcrHeuristics(text, items);
-        await persistPendingReceiptToIDB();
-        renderReceiptPreview();
-      } catch {
-        $('ocrStatus').textContent = 'Scan failed — tap the receipt to preview; you can still save.';
-      } finally {
-        $('btnScan').disabled = !!pendingReceiptBlob;
-      }
-    }
-
-    const OCR_SKIP =
-      /^(total|sub\s*total|amount\s*due|balance|change|vat|card|visa|mastercard|amex|contactless|cash|auth|approved|thank|receipt|date|time|tel|www\.|http|store|sainsbury|tesco|asda|lidl|co-op|items?\s*pc)/i;
-
-    function cleanReceiptLabel(raw) {
-      return raw
-        .replace(/\s+@\s*.*$/i, '')
-        .replace(/\s+\d+\s*x\s+.*$/i, '')
-        .replace(/\s+[BN]\s*$/i, '')
-        .replace(/[^a-zA-Z0-9%&'’+\-.,\s]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-    }
-
-    function extractPriceFromLine(line) {
-      const normalized = line.replace(/£/g, ' ').trim();
-      const matches = [...normalized.matchAll(/(\d{1,4})[.,\s](\d{2})\b/g)];
-      if (!matches.length) return null;
-      const last = matches[matches.length - 1];
-      const price = Number(`${last[1]}.${last[2]}`);
-      if (!Number.isFinite(price) || price <= 0 || price > 250) return null;
-      const labelRaw = normalized.slice(0, last.index).replace(/\s+[\d.]+\s*$/, '').trim();
-      const label = cleanReceiptLabel(labelRaw);
-      if (label.length < 2 || /^\d+$/.test(label)) return null;
-      return { label: label.slice(0, 72), price };
-    }
-
-    function parseReceiptLineItems(text) {
-      if (!text) return [];
-      const lines = text
-        .split('\n')
-        .map((l) => l.trim())
-        .filter((l) => l.length > 1);
-      const items = [];
-      const seen = new Set();
-      for (const line of lines) {
-        if (OCR_SKIP.test(line)) continue;
-        if (/^\d{1,2}[\/\-]\d{1,2}/.test(line)) continue;
-        if (/^(?:\d{2}:\d{2}|\*{3,})/.test(line)) continue;
-        const parsed = extractPriceFromLine(line);
-        if (!parsed) continue;
-        if (parsed.label.length > 60 && parsed.price < 2) continue;
-        const key = parsed.label.toLowerCase() + ':' + parsed.price;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        items.push(parsed);
-        if (items.length >= 40) break;
-      }
-      return items;
-    }
-
-    function renderOcrItemsList(items) {
-      lastOcrItems = items;
-      const box = $('ocrItemsBox');
-      const ul = $('ocrItemsList');
-      if (!items.length) {
-        box.hidden = true;
-        ul.innerHTML = '';
-        return;
-      }
-      box.hidden = false;
-      ul.innerHTML = items
-        .map(
-          (it, i) =>
-            `<li><button type="button" class="ocr-item" data-ocr-idx="${i}"><span>${escapeHtml(it.label)}</span><span>${formatGBP(it.price)}</span></button></li>`
-        )
-        .join('');
-      ul.querySelectorAll('[data-ocr-idx]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          const it = lastOcrItems[Number(btn.dataset.ocrIdx)];
-          if (!it) return;
-          $('what').value = it.label;
-          if (!$('amount').value) $('amount').value = String(it.price);
-          $('ocrStatus').textContent = `Using “${it.label}” — adjust if needed.`;
-        });
-      });
-    }
-
-    function applyOcrHeuristics(text, items) {
-      const amountMatch = text.match(/(?:^|\n)\s*(?:total|amount due|balance)\s*[:\s]*£?\s*(\d+[.,]\d{2})/im)
-        || text.match(/£\s*(\d+[.,]\d{2})/);
-      if (amountMatch) {
-        const raw = (amountMatch[1] || '').replace(',', '.');
-        if (raw && !$('amount').value) $('amount').value = raw;
-      }
-      const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-      const shopLine = lines.find(
-        (l) =>
-          l.length > 3 &&
-          l.length < 42 &&
-          !/^\d/.test(l) &&
-          !/(\d{1,4})[.,]\d{2}\s*$/.test(l) &&
-          !OCR_SKIP.test(l)
-      );
-      if (shopLine && !$('shop').value) $('shop').value = shopLine.slice(0, 80);
-      if (!$('what').value && items && items[0]) $('what').value = items[0].label;
-
-      const cat = suggestCategory($('shop').value, $('what').value, text);
-      setCategory(cat);
     }
 
     // ——— UI helpers ———
@@ -1543,12 +1281,6 @@
       });
     }
 
-    function getExpenseScanItems(e) {
-      if (e.ocrItems?.length) return e.ocrItems;
-      if (e.ocrText) return parseReceiptLineItems(e.ocrText);
-      return [];
-    }
-
     function closeViewSheet() {
       $('viewSheet').classList.remove('open');
       $('viewSheet').setAttribute('aria-hidden', 'true');
@@ -1574,18 +1306,6 @@
       $('viewWhat').textContent = e.what;
       $('viewCatDate').textContent = `${meta.icon} ${meta.label} · ${formatNiceDate(e.date)}`;
       $('viewAmount').textContent = formatGBP(e.amount);
-
-      const items = getExpenseScanItems(e);
-      const list = $('viewScanList');
-      list.innerHTML = '';
-      if (items.length) {
-        $('viewScanEmpty').hidden = true;
-        list.innerHTML = items
-          .map((it) => `<li class="view-scan-row"><span>${escapeHtml(it.label)}</span><span>${formatGBP(it.price)}</span></li>`)
-          .join('');
-      } else {
-        $('viewScanEmpty').hidden = false;
-      }
 
       const receiptBlock = $('viewReceiptBlock');
       $('viewReceiptPreview').innerHTML = '';
@@ -1670,10 +1390,6 @@
       setCategory(e.category || 'other');
       $('btnDeleteExpense').hidden = false;
       await clearPendingReceipt();
-      clearOcrItemsUI();
-      lastOcrText = e.ocrText || '';
-      lastOcrItems = getExpenseScanItems(e);
-      if (lastOcrItems.length) renderOcrItemsList(lastOcrItems);
       if (e.receiptId) {
         pendingReceiptId = e.receiptId;
         pendingReceiptIsDraft = false;
@@ -1682,8 +1398,7 @@
           pendingReceiptBlob = blob;
           pendingReceiptObjectUrl = URL.createObjectURL(blob);
           renderReceiptPreview();
-          $('btnScan').disabled = false;
-          $('ocrStatus').textContent = 'Receipt on file — tap to preview or Scan again.';
+          $('receiptStatus').textContent = 'Receipt on file — tap to preview.';
         }
       }
       openSheet();
@@ -1701,8 +1416,6 @@
           revokeThumbCache(existing.receiptId);
         }
         receiptId = null;
-        lastOcrItems = [];
-        lastOcrText = '';
         receiptMarkedForRemoval = false;
       } else if (pendingReceiptBlob || pendingReceiptId) {
         const rid = pendingReceiptId || uuid();
@@ -1727,16 +1440,15 @@
         note: $('note').value.trim(),
         category: $('categorySelect').value,
         receiptId,
-        ocrItems: lastOcrItems.length ? lastOcrItems : existing?.ocrItems || [],
-        ocrText: lastOcrText || existing?.ocrText || '',
         createdAt: existing ? existing.createdAt : Date.now(),
         updatedAt: Date.now(),
       };
+      if (existing?.ocrText) entry.ocrText = existing.ocrText;
+      if (existing?.ocrItems?.length) entry.ocrItems = existing.ocrItems;
       pendingReceiptIsDraft = false;
 
-      const shopWhat = entry.shop + ' ' + entry.what;
       if (!existing || entry.category === 'other') {
-        const sug = suggestCategory(entry.shop, entry.what, shopWhat);
+        const sug = suggestCategory(entry.shop, entry.what);
         if (sug !== 'other') entry.category = sug;
       }
 
@@ -1884,7 +1596,7 @@
 
     // ——— Suggest category on typing ———
     function onFieldBlurSuggest() {
-      const sug = suggestCategory($('shop').value, $('what').value, '');
+      const sug = suggestCategory($('shop').value, $('what').value);
       if ($('categorySelect').value === 'other') setCategory(sug);
     }
 
@@ -1915,7 +1627,6 @@
       });
       $('expenseForm').addEventListener('submit', saveExpenseFromForm);
       $('searchInput').addEventListener('input', renderList);
-      $('btnScan').addEventListener('click', runOcr);
       $('btnRemoveReceipt').addEventListener('click', () => removeReceiptPhoto());
       $('fileInput').addEventListener('change', (e) => handleReceiptFileInput(e.target));
       $('shop').addEventListener('blur', onFieldBlurSuggest);
