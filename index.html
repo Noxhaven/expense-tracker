@@ -313,6 +313,15 @@
       border-radius: 10px;
       background: var(--coral-soft);
     }
+    .btn-remove-receipt {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #b91c1c;
+      padding: 8px 12px;
+      border-radius: 10px;
+      background: #fee2e2;
+    }
+    .btn-remove-receipt[hidden] { display: none; }
     .receipt-lightbox {
       position: fixed;
       inset: 0;
@@ -667,6 +676,7 @@
           <button type="button" class="cam-btn" id="btnCamera" title="Take photo">📷</button>
           <button type="button" class="btn-ghost" id="btnPickFiles">Add images</button>
           <button type="button" class="btn-scan" id="btnScan" disabled>Scan</button>
+          <button type="button" class="btn-remove-receipt" id="btnRemoveReceipt" hidden>Remove photo</button>
         </div>
         <input type="file" id="fileInput" accept="image/*" multiple />
         <input type="file" id="cameraInput" accept="image/*" capture="environment" />
@@ -752,6 +762,7 @@
     let viewDetailExpenseId = null;
     let viewReceiptObjectUrl = null;
     let lightboxBlobUrl = null;
+    let receiptMarkedForRemoval = false;
     /** Raw image files accumulated before stitching (long receipts). */
     let pendingSourceFiles = [];
     let undoBuffer = null;
@@ -999,10 +1010,13 @@
 
     function renderReceiptPreview() {
       const box = $('receiptPreview');
+      const btnRemove = $('btnRemoveReceipt');
       if (!pendingReceiptObjectUrl) {
         box.innerHTML = '';
+        if (btnRemove) btnRemove.hidden = true;
         return;
       }
+      if (btnRemove) btnRemove.hidden = false;
       box.innerHTML = `
         <button type="button" class="receipt-thumb-btn" id="btnReceiptThumb" aria-label="View full receipt">
           <img src="${pendingReceiptObjectUrl}" alt="Receipt preview" />
@@ -1032,10 +1046,38 @@
       pendingReceiptBlob = null;
       pendingReceiptId = null;
       pendingSourceFiles = [];
+      receiptMarkedForRemoval = false;
       $('receiptPreview').innerHTML = '';
       $('btnScan').disabled = true;
+      $('btnRemoveReceipt').hidden = true;
       $('ocrStatus').textContent = '';
       clearOcrItemsUI();
+    }
+
+  async function removeReceiptPhoto() {
+      if (!pendingReceiptObjectUrl && !pendingReceiptId) return;
+      if (!confirm('Remove this receipt photo?')) return;
+      const rid = pendingReceiptId;
+      const editId = $('editId').value;
+      const existing = editId && expenses.find((x) => x.id === editId);
+      if (existing?.receiptId === rid) {
+        receiptMarkedForRemoval = true;
+      } else if (rid) {
+        await deleteReceipt(rid);
+        revokeThumbCache(rid);
+      }
+      pendingReceiptIsDraft = false;
+      if (pendingReceiptObjectUrl) URL.revokeObjectURL(pendingReceiptObjectUrl);
+      pendingReceiptObjectUrl = null;
+      pendingReceiptBlob = null;
+      pendingReceiptId = null;
+      pendingSourceFiles = [];
+      lastOcrText = '';
+      $('receiptPreview').innerHTML = '';
+      $('btnScan').disabled = true;
+      $('btnRemoveReceipt').hidden = true;
+      clearOcrItemsUI();
+      $('ocrStatus').textContent = 'Receipt photo removed. Save to keep this change.';
     }
 
     async function setPendingReceiptFromFiles(fileList) {
@@ -1498,7 +1540,16 @@
       const existing = expenses.find((x) => x.id === id);
       let receiptId = existing ? existing.receiptId : null;
 
-      if (pendingReceiptBlob) {
+      if (receiptMarkedForRemoval) {
+        if (existing?.receiptId) {
+          await deleteReceipt(existing.receiptId);
+          revokeThumbCache(existing.receiptId);
+        }
+        receiptId = null;
+        lastOcrItems = [];
+        lastOcrText = '';
+        receiptMarkedForRemoval = false;
+      } else if (pendingReceiptBlob) {
         const rid = pendingReceiptId || uuid();
         await putReceipt(rid, pendingReceiptBlob);
         if (existing && existing.receiptId && existing.receiptId !== rid) {
@@ -1707,6 +1758,7 @@
       $('expenseForm').addEventListener('submit', saveExpenseFromForm);
       $('searchInput').addEventListener('input', renderList);
       $('btnScan').addEventListener('click', runOcr);
+      $('btnRemoveReceipt').addEventListener('click', () => removeReceiptPhoto());
       $('btnCamera').addEventListener('click', () => $('cameraInput').click());
       $('btnPickFiles').addEventListener('click', () => $('fileInput').click());
       $('fileInput').addEventListener('change', (e) => {
