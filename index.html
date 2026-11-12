@@ -285,15 +285,102 @@
     .receipt-preview {
       margin-top: 10px;
       display: flex;
-      gap: 8px;
+      gap: 10px;
       flex-wrap: wrap;
       align-items: center;
     }
-    .receipt-preview img {
-      max-height: 80px;
-      border-radius: 8px;
+    .receipt-thumb-btn {
+      padding: 0;
+      border: none;
+      background: transparent;
+      border-radius: 10px;
+      overflow: hidden;
       border: 1px solid #e2e8f0;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+      cursor: pointer;
     }
+    .receipt-thumb-btn img {
+      display: block;
+      max-height: 120px;
+      max-width: 100%;
+      width: auto;
+    }
+    .btn-view-receipt {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--coral);
+      padding: 8px 12px;
+      border-radius: 10px;
+      background: var(--coral-soft);
+    }
+    .receipt-lightbox {
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      background: rgba(15, 23, 42, 0.92);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: calc(16px + var(--safe-t)) 16px calc(16px + var(--safe-b));
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease;
+    }
+    .receipt-lightbox.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .receipt-lightbox img {
+      max-width: min(100%, 520px);
+      max-height: min(78vh, 900px);
+      object-fit: contain;
+      border-radius: 8px;
+      background: #fff;
+    }
+    .receipt-lightbox .close-lb {
+      position: absolute;
+      top: calc(12px + var(--safe-t));
+      right: calc(12px + var(--safe-r));
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+      font-size: 1.4rem;
+      line-height: 1;
+    }
+    .ocr-items {
+      margin-top: 10px;
+      padding: 10px 12px;
+      background: var(--bg);
+      border-radius: 12px;
+      max-height: 160px;
+      overflow-y: auto;
+    }
+    .ocr-items h4 {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+    .ocr-items ul { list-style: none; }
+    .ocr-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 0;
+      border-bottom: 1px solid #e2e8f0;
+      font-size: 0.85rem;
+      cursor: pointer;
+      text-align: left;
+      width: 100%;
+      background: none;
+      color: inherit;
+    }
+    .ocr-item:last-child { border-bottom: none; }
+    .ocr-item span:last-child { color: var(--muted); flex-shrink: 0; }
+    .thumb-mini { cursor: pointer; }
     .btn-scan {
       padding: 10px 16px;
       border-radius: 12px;
@@ -383,15 +470,69 @@
 
     .item-actions {
       display: flex;
-      gap: 4px;
-      margin-top: 4px;
-      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+      align-items: center;
     }
-    .item-actions button {
+    .btn-pill {
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 7px 14px;
+      border-radius: 999px;
+      border: none;
+      line-height: 1.2;
+    }
+    .btn-pill-edit {
+      background: var(--coral-soft);
+      color: var(--coral-hover);
+    }
+    .btn-pill-view {
+      background: #e0f2fe;
+      color: #0369a1;
+    }
+    .item-actions .btn-del-lite {
       font-size: 0.75rem;
       color: var(--muted);
-      padding: 4px 8px;
+      padding: 7px 8px;
+      margin-left: auto;
     }
+    .expense-main.tappable { cursor: pointer; }
+    .view-detail-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .view-detail-head .amount-big {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--coral-hover);
+    }
+    .view-meta { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
+    .view-receipt-block { margin: 16px 0; }
+    .view-receipt-block h3,
+    .view-scan-block h3 {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+    .view-scan-block { margin-bottom: 16px; }
+    .view-scan-list { list-style: none; }
+    .view-scan-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 0;
+      border-bottom: 1px solid #f1f5f9;
+      font-size: 0.9rem;
+    }
+    .view-scan-row span:last-child { color: var(--muted); }
+    .view-empty-hint { font-size: 0.85rem; color: var(--muted); margin-top: 8px; }
+    .view-actions { display: flex; gap: 10px; margin-top: 8px; }
+    #viewSheet { z-index: 65; }
 
     input[type="file"] { display: none; }
 
@@ -531,6 +672,10 @@
         <input type="file" id="cameraInput" accept="image/*" capture="environment" />
         <div class="receipt-preview" id="receiptPreview"></div>
         <p class="ocr-status" id="ocrStatus"></p>
+        <div class="ocr-items" id="ocrItemsBox" hidden>
+          <h4>Recognised from receipt</h4>
+          <ul id="ocrItemsList"></ul>
+        </div>
       </div>
       <div class="btn-row">
         <button type="button" class="btn-ghost btn-danger" id="btnDeleteExpense" hidden>Delete</button>
@@ -540,9 +685,40 @@
     </form>
   </div>
 
+  <div class="sheet" id="viewSheet" role="dialog" aria-labelledby="viewSheetTitle" aria-hidden="true">
+    <div class="sheet-handle"></div>
+    <h2 id="viewSheetTitle">Shopping</h2>
+    <div class="view-detail-head">
+      <div>
+        <div id="viewShop" style="font-weight:600;font-size:1.1rem"></div>
+        <div id="viewWhat" class="view-meta"></div>
+        <div id="viewCatDate" class="view-meta"></div>
+      </div>
+      <div class="amount-big" id="viewAmount"></div>
+    </div>
+    <div class="view-receipt-block" id="viewReceiptBlock" hidden>
+      <h3>Receipt</h3>
+      <div class="receipt-preview" id="viewReceiptPreview"></div>
+    </div>
+    <div class="view-scan-block" id="viewScanBlock">
+      <h3>Scanned items</h3>
+      <ul class="view-scan-list" id="viewScanList"></ul>
+      <p class="view-empty-hint" id="viewScanEmpty" hidden>No line items were saved. Tap Edit to scan the receipt again.</p>
+    </div>
+    <div class="view-actions">
+      <button type="button" class="btn-pill btn-pill-edit" id="btnDetailEdit">Edit</button>
+      <button type="button" class="btn-ghost" id="btnDetailClose" style="flex:1">Close</button>
+    </div>
+  </div>
+
   <div class="toast" id="toast" role="status">
     <span>Expense deleted</span>
     <button type="button" id="btnUndo">Undo</button>
+  </div>
+
+  <div class="receipt-lightbox" id="receiptLightbox" aria-hidden="true">
+    <button type="button" class="close-lb" id="btnCloseLightbox" aria-label="Close">×</button>
+    <img id="lightboxImg" src="" alt="Receipt full view" />
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
@@ -569,6 +745,12 @@
     let pendingReceiptBlob = null;
     let pendingReceiptObjectUrl = null;
     let pendingReceiptId = null;
+    /** Receipt saved to IndexedDB before expense Save (draft). */
+    let pendingReceiptIsDraft = false;
+    let lastOcrItems = [];
+    let lastOcrText = '';
+    let viewDetailExpenseId = null;
+    let viewReceiptObjectUrl = null;
     /** Raw image files accumulated before stitching (long receipts). */
     let pendingSourceFiles = [];
     let undoBuffer = null;
@@ -739,7 +921,67 @@
       });
     }
 
-    function clearPendingReceipt() {
+    function clearOcrItemsUI() {
+      lastOcrItems = [];
+      $('ocrItemsList').innerHTML = '';
+      $('ocrItemsBox').hidden = true;
+    }
+
+    async function deleteDraftReceiptIfNeeded() {
+      if (!pendingReceiptId || !pendingReceiptIsDraft) return;
+      const editId = $('editId').value;
+      const linked = editId && expenses.find((x) => x.id === editId)?.receiptId === pendingReceiptId;
+      if (!linked) {
+        await deleteReceipt(pendingReceiptId);
+        thumbCache.delete(pendingReceiptId);
+      }
+      pendingReceiptIsDraft = false;
+    }
+
+    function openReceiptLightbox(src) {
+      if (!src) return;
+      $('lightboxImg').src = src;
+      $('receiptLightbox').classList.add('open');
+      $('receiptLightbox').setAttribute('aria-hidden', 'false');
+    }
+
+    function closeReceiptLightbox() {
+      $('receiptLightbox').classList.remove('open');
+      $('receiptLightbox').setAttribute('aria-hidden', 'true');
+      $('lightboxImg').src = '';
+    }
+
+    async function openReceiptLightboxById(receiptId) {
+      const url = await thumbUrl(receiptId);
+      if (url) openReceiptLightbox(url);
+    }
+
+    function renderReceiptPreview() {
+      const box = $('receiptPreview');
+      if (!pendingReceiptObjectUrl) {
+        box.innerHTML = '';
+        return;
+      }
+      box.innerHTML = `
+        <button type="button" class="receipt-thumb-btn" id="btnReceiptThumb" aria-label="View full receipt">
+          <img src="${pendingReceiptObjectUrl}" alt="Receipt preview" />
+        </button>
+        <button type="button" class="btn-view-receipt" id="btnReceiptViewFull">View full receipt</button>
+      `;
+      $('btnReceiptThumb').addEventListener('click', () => openReceiptLightbox(pendingReceiptObjectUrl));
+      $('btnReceiptViewFull').addEventListener('click', () => openReceiptLightbox(pendingReceiptObjectUrl));
+    }
+
+    async function persistPendingReceiptToIDB() {
+      if (!pendingReceiptBlob || !pendingReceiptId) return;
+      await putReceipt(pendingReceiptId, pendingReceiptBlob);
+      const editId = $('editId').value;
+      const existing = editId && expenses.find((x) => x.id === editId);
+      pendingReceiptIsDraft = !(existing && existing.receiptId === pendingReceiptId);
+    }
+
+    async function clearPendingReceipt() {
+      await deleteDraftReceiptIfNeeded();
       if (pendingReceiptObjectUrl) URL.revokeObjectURL(pendingReceiptObjectUrl);
       pendingReceiptObjectUrl = null;
       pendingReceiptBlob = null;
@@ -748,18 +990,22 @@
       $('receiptPreview').innerHTML = '';
       $('btnScan').disabled = true;
       $('ocrStatus').textContent = '';
+      clearOcrItemsUI();
     }
 
     async function setPendingReceiptFromFiles(fileList) {
       if (!fileList || !fileList.length) return;
+      await deleteDraftReceiptIfNeeded();
       pendingSourceFiles.push(...fileList);
       const blob = await stitchAndCompress(pendingSourceFiles);
       pendingReceiptBlob = blob;
       pendingReceiptId = uuid();
       if (pendingReceiptObjectUrl) URL.revokeObjectURL(pendingReceiptObjectUrl);
       pendingReceiptObjectUrl = URL.createObjectURL(blob);
-      $('receiptPreview').innerHTML = `<img src="${pendingReceiptObjectUrl}" alt="Receipt preview" />`;
+      await persistPendingReceiptToIDB();
+      renderReceiptPreview();
       $('btnScan').disabled = false;
+      $('ocrStatus').textContent = 'Receipt saved — tap the image to preview, or Scan for line items.';
 
       const shop = $('shop').value;
       const what = $('what').value;
@@ -783,25 +1029,99 @@
           },
         });
         const text = (data.text || '').trim();
-        $('ocrStatus').textContent = text ? 'Suggestions applied — please review.' : 'Could not read much — photo saved.';
-        applyOcrHeuristics(text);
+        lastOcrText = text;
+        const items = parseReceiptLineItems(text);
+        renderOcrItemsList(items);
+        if (text) {
+          $('ocrStatus').textContent = items.length
+            ? `Found ${items.length} line item${items.length === 1 ? '' : 's'} — tap one to use it.`
+            : 'Scan done — check shop, amount, and category.';
+        } else {
+          $('ocrStatus').textContent = 'Could not read much — receipt photo is still saved.';
+        }
+        applyOcrHeuristics(text, items);
+        await persistPendingReceiptToIDB();
+        renderReceiptPreview();
       } catch {
-        $('ocrStatus').textContent = 'Scan failed — you can still save the photo.';
+        $('ocrStatus').textContent = 'Scan failed — tap the receipt to preview; you can still save.';
       } finally {
-        $('btnScan').disabled = false;
+        $('btnScan').disabled = !!pendingReceiptBlob;
       }
     }
 
-    function applyOcrHeuristics(text) {
-      const lower = text.toLowerCase();
-      const amountMatch = text.match(/£\s*(\d+[.,]\d{2})|(?:total|amount)\s*[:\s]*£?\s*(\d+[.,]\d{2})/i);
+    const OCR_SKIP = /^(total|subtotal|balance|change|vat|card|visa|mastercard|amex|contactless|cash|auth|approved|thank|receipt|date|time|tel|www\.|http)/i;
+    const PRICE_TAIL = /[£]?\s*(\d+[.,]\d{2})\s*$/;
+
+    function parseReceiptLineItems(text) {
+      if (!text) return [];
+      const lines = text.split('\n').map((l) => l.trim()).filter((l) => l.length > 2);
+      const items = [];
+      const seen = new Set();
+      for (const line of lines) {
+        if (OCR_SKIP.test(line)) continue;
+        if (/^\d{1,2}[\/\-]\d{1,2}/.test(line)) continue;
+        const m = line.match(/^(.+?)\s+£\s*(\d+[.,]\d{2})\s*$/);
+        let label;
+        let price;
+        if (m) {
+          label = m[1].replace(/\s+/g, ' ').trim();
+          price = Number(m[2].replace(',', '.'));
+        } else {
+          const m2 = line.match(/^(.+?)\s+(\d+[.,]\d{2})\s*$/);
+          if (!m2 || m2[1].length < 2) continue;
+          label = m2[1].replace(/\s+/g, ' ').trim();
+          price = Number(m2[2].replace(',', '.'));
+        }
+        if (label.length < 2 || label.length > 60 || !Number.isFinite(price) || price > 5000) continue;
+        const key = label.toLowerCase() + price;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        items.push({ label, price });
+        if (items.length >= 25) break;
+      }
+      return items;
+    }
+
+    function renderOcrItemsList(items) {
+      lastOcrItems = items;
+      const box = $('ocrItemsBox');
+      const ul = $('ocrItemsList');
+      if (!items.length) {
+        box.hidden = true;
+        ul.innerHTML = '';
+        return;
+      }
+      box.hidden = false;
+      ul.innerHTML = items
+        .map(
+          (it, i) =>
+            `<li><button type="button" class="ocr-item" data-ocr-idx="${i}"><span>${escapeHtml(it.label)}</span><span>${formatGBP(it.price)}</span></button></li>`
+        )
+        .join('');
+      ul.querySelectorAll('[data-ocr-idx]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const it = lastOcrItems[Number(btn.dataset.ocrIdx)];
+          if (!it) return;
+          $('what').value = it.label;
+          if (!$('amount').value) $('amount').value = String(it.price);
+          $('ocrStatus').textContent = `Using “${it.label}” — adjust if needed.`;
+        });
+      });
+    }
+
+    function applyOcrHeuristics(text, items) {
+      const amountMatch = text.match(/(?:^|\n)\s*(?:total|amount due|balance)\s*[:\s]*£?\s*(\d+[.,]\d{2})/im)
+        || text.match(/£\s*(\d+[.,]\d{2})/);
       if (amountMatch) {
-        const raw = (amountMatch[1] || amountMatch[2] || '').replace(',', '.');
+        const raw = (amountMatch[1] || '').replace(',', '.');
         if (raw && !$('amount').value) $('amount').value = raw;
       }
       const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-      const shopLine = lines.find((l) => l.length > 3 && l.length < 40 && !/^\d/.test(l));
+      const shopLine = lines.find(
+        (l) => l.length > 3 && l.length < 42 && !/^\d/.test(l) && !PRICE_TAIL.test(l) && !OCR_SKIP.test(l)
+      );
       if (shopLine && !$('shop').value) $('shop').value = shopLine.slice(0, 80);
+      if (!$('what').value && items && items[0]) $('what').value = items[0].label;
 
       const cat = suggestCategory($('shop').value, $('what').value, text);
       setCategory(cat);
@@ -904,12 +1224,13 @@
         const meta = catMeta(e.category);
         li.innerHTML = `
           <div class="expense-icon" aria-hidden="true">${meta.icon}</div>
-          <div class="expense-main">
+          <div class="expense-main tappable" data-view="${e.id}" role="button" tabindex="0" aria-label="View ${escapeHtml(e.shop || e.what)}">
             <div class="expense-shop">${escapeHtml(e.shop || '—')}</div>
             <div class="expense-what">${escapeHtml(e.what)}</div>
             <div class="item-actions">
-              <button type="button" data-edit="${e.id}">Edit</button>
-              <button type="button" data-del="${e.id}">Delete</button>
+              <button type="button" class="btn-pill btn-pill-view" data-view="${e.id}">View</button>
+              <button type="button" class="btn-pill btn-pill-edit" data-edit="${e.id}">Edit</button>
+              <button type="button" class="btn-del-lite" data-del="${e.id}">Delete</button>
             </div>
           </div>
           <div class="expense-meta">
@@ -923,17 +1244,129 @@
           thumbUrl(e.receiptId).then((url) => {
             if (!url) return;
             const slot = li.querySelector('.thumb-slot');
-            if (slot) slot.innerHTML = `<img class="thumb-mini" src="${url}" alt="" loading="lazy" />`;
+            if (slot) {
+              slot.innerHTML = `<img class="thumb-mini" src="${url}" alt="View receipt" loading="lazy" data-view-rid="${e.receiptId}" role="button" tabindex="0" />`;
+            }
           });
         }
       }
 
+      ul.querySelectorAll('[data-view-rid]').forEach((img) => {
+        const open = () => openReceiptLightboxById(img.dataset.viewRid);
+        img.addEventListener('click', open);
+        img.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') {
+            ev.preventDefault();
+            open();
+          }
+        });
+      });
+
+      ul.querySelectorAll('[data-view]').forEach((el) => {
+        const open = (ev) => {
+          if (ev.type === 'keydown' && ev.key !== 'Enter' && ev.key !== ' ') return;
+          if (ev.target.closest('[data-edit], [data-del], [data-view-rid]')) return;
+          if (ev.type === 'click' && ev.target.closest('button')) return;
+          ev.preventDefault();
+          openExpenseDetail(el.dataset.view);
+        };
+        el.addEventListener('click', open);
+        el.addEventListener('keydown', open);
+      });
+      ul.querySelectorAll('.btn-pill-view').forEach((btn) => {
+        btn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          openExpenseDetail(btn.dataset.view);
+        });
+      });
       ul.querySelectorAll('[data-edit]').forEach((btn) => {
-        btn.addEventListener('click', () => openEditor(btn.dataset.edit));
+        btn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          openEditor(btn.dataset.edit);
+        });
       });
       ul.querySelectorAll('[data-del]').forEach((btn) => {
-        btn.addEventListener('click', () => deleteExpense(btn.dataset.del));
+        btn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          deleteExpense(btn.dataset.del);
+        });
       });
+    }
+
+    function getExpenseScanItems(e) {
+      if (e.ocrItems?.length) return e.ocrItems;
+      if (e.ocrText) return parseReceiptLineItems(e.ocrText);
+      return [];
+    }
+
+    function closeViewSheet() {
+      $('viewSheet').classList.remove('open');
+      $('viewSheet').setAttribute('aria-hidden', 'true');
+      if (viewReceiptObjectUrl) {
+        URL.revokeObjectURL(viewReceiptObjectUrl);
+        viewReceiptObjectUrl = null;
+      }
+      viewDetailExpenseId = null;
+      $('viewReceiptPreview').innerHTML = '';
+      if (!$('sheet').classList.contains('open')) {
+        $('overlay').classList.remove('open');
+      }
+    }
+
+    async function openExpenseDetail(id) {
+      const e = expenses.find((x) => x.id === id);
+      if (!e) return;
+      await closeSheet();
+      viewDetailExpenseId = id;
+      const meta = catMeta(e.category);
+      $('viewSheetTitle').textContent = e.shop || 'Shopping';
+      $('viewShop').textContent = e.shop || '—';
+      $('viewWhat').textContent = e.what;
+      $('viewCatDate').textContent = `${meta.icon} ${meta.label} · ${formatNiceDate(e.date)}`;
+      $('viewAmount').textContent = formatGBP(e.amount);
+
+      const items = getExpenseScanItems(e);
+      const list = $('viewScanList');
+      list.innerHTML = '';
+      if (items.length) {
+        $('viewScanEmpty').hidden = true;
+        list.innerHTML = items
+          .map((it) => `<li class="view-scan-row"><span>${escapeHtml(it.label)}</span><span>${formatGBP(it.price)}</span></li>`)
+          .join('');
+      } else {
+        $('viewScanEmpty').hidden = false;
+      }
+
+      const receiptBlock = $('viewReceiptBlock');
+      $('viewReceiptPreview').innerHTML = '';
+      if (viewReceiptObjectUrl) {
+        URL.revokeObjectURL(viewReceiptObjectUrl);
+        viewReceiptObjectUrl = null;
+      }
+      if (e.receiptId) {
+        const blob = await getReceipt(e.receiptId);
+        if (blob) {
+          receiptBlock.hidden = false;
+          viewReceiptObjectUrl = URL.createObjectURL(blob);
+          $('viewReceiptPreview').innerHTML = `
+            <button type="button" class="receipt-thumb-btn" id="btnViewDetailThumb" aria-label="View full receipt">
+              <img src="${viewReceiptObjectUrl}" alt="Receipt" />
+            </button>
+            <button type="button" class="btn-view-receipt" id="btnViewDetailFull">View full receipt</button>
+          `;
+          const openFull = () => openReceiptLightbox(viewReceiptObjectUrl);
+          $('btnViewDetailThumb').addEventListener('click', openFull);
+          $('btnViewDetailFull').addEventListener('click', openFull);
+        } else {
+          receiptBlock.hidden = true;
+        }
+      } else {
+        receiptBlock.hidden = true;
+      }
+
+      $('overlay').classList.add('open');
+      $('viewSheet').classList.add('open');
+      $('viewSheet').setAttribute('aria-hidden', 'false');
     }
 
     function escapeHtml(s) {
@@ -951,20 +1384,23 @@
       $('sheet').classList.add('open');
     }
 
-    function closeSheet() {
-      $('overlay').classList.remove('open');
+    async function closeSheet() {
       $('sheet').classList.remove('open');
-      clearPendingReceipt();
+      await clearPendingReceipt();
+      if (!$('viewSheet').classList.contains('open')) {
+        $('overlay').classList.remove('open');
+      }
     }
 
-    function openAdd() {
+    async function openAdd() {
+      closeViewSheet();
       $('sheetTitle').textContent = 'Add expense';
       $('editId').value = '';
       $('expenseForm').reset();
       $('date').value = todayISO();
       setCategory('other');
       $('btnDeleteExpense').hidden = true;
-      clearPendingReceipt();
+      await clearPendingReceipt();
       openSheet();
     }
 
@@ -980,15 +1416,21 @@
       $('note').value = e.note || '';
       setCategory(e.category || 'other');
       $('btnDeleteExpense').hidden = false;
-      clearPendingReceipt();
+      await clearPendingReceipt();
+      clearOcrItemsUI();
+      lastOcrText = e.ocrText || '';
+      lastOcrItems = getExpenseScanItems(e);
+      if (lastOcrItems.length) renderOcrItemsList(lastOcrItems);
       if (e.receiptId) {
         pendingReceiptId = e.receiptId;
+        pendingReceiptIsDraft = false;
         const blob = await getReceipt(e.receiptId);
         if (blob) {
           pendingReceiptBlob = blob;
           pendingReceiptObjectUrl = URL.createObjectURL(blob);
-          $('receiptPreview').innerHTML = `<img src="${pendingReceiptObjectUrl}" alt="Receipt" />`;
+          renderReceiptPreview();
           $('btnScan').disabled = false;
+          $('ocrStatus').textContent = 'Receipt on file — tap to preview or Scan again.';
         }
       }
       openSheet();
@@ -1020,9 +1462,12 @@
         note: $('note').value.trim(),
         category: $('categorySelect').value,
         receiptId,
+        ocrItems: lastOcrItems.length ? lastOcrItems : existing?.ocrItems || [],
+        ocrText: lastOcrText || existing?.ocrText || '',
         createdAt: existing ? existing.createdAt : Date.now(),
         updatedAt: Date.now(),
       };
+      pendingReceiptIsDraft = false;
 
       const shopWhat = entry.shop + ' ' + entry.what;
       if (!existing || entry.category === 'other') {
@@ -1034,7 +1479,7 @@
       if (idx >= 0) expenses[idx] = entry;
       else expenses.push(entry);
       saveExpenses();
-      closeSheet();
+      await closeSheet();
       renderHero();
       renderList();
     }
@@ -1186,9 +1631,23 @@
 
     // ——— Boot ———
     function bindEvents() {
-      $('fabAdd').addEventListener('click', openAdd);
-      $('btnCancel').addEventListener('click', closeSheet);
-      $('overlay').addEventListener('click', closeSheet);
+      $('fabAdd').addEventListener('click', () => openAdd());
+      $('btnCancel').addEventListener('click', () => closeSheet());
+      $('overlay').addEventListener('click', () => {
+        if ($('viewSheet').classList.contains('open')) closeViewSheet();
+        else closeSheet();
+      });
+      $('btnDetailClose').addEventListener('click', closeViewSheet);
+      $('btnDetailEdit').addEventListener('click', () => {
+        const id = viewDetailExpenseId;
+        if (!id) return;
+        closeViewSheet();
+        openEditor(id);
+      });
+      $('btnCloseLightbox').addEventListener('click', closeReceiptLightbox);
+      $('receiptLightbox').addEventListener('click', (ev) => {
+        if (ev.target === $('receiptLightbox') || ev.target === $('btnCloseLightbox')) closeReceiptLightbox();
+      });
       $('expenseForm').addEventListener('submit', saveExpenseFromForm);
       $('searchInput').addEventListener('input', renderList);
       $('btnScan').addEventListener('click', runOcr);
