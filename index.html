@@ -679,7 +679,7 @@
           <button type="button" class="btn-remove-receipt" id="btnRemoveReceipt" hidden>Remove photo</button>
         </div>
         <input type="file" id="fileInput" accept="image/*" multiple />
-        <input type="file" id="cameraInput" accept="image/*" capture="environment" />
+        <input type="file" id="cameraInput" accept="image/*,.heic,.heif" capture="environment" />
         <div class="receipt-preview" id="receiptPreview"></div>
         <p class="ocr-status" id="ocrStatus"></p>
         <div class="ocr-items" id="ocrItemsBox" hidden>
@@ -906,14 +906,47 @@
     // ——— Receipt image processing ———
     function loadImageFromFile(file) {
       return new Promise((resolve, reject) => {
-        const url = URL.createObjectURL(file);
-        const img = new Image();
-        img.onload = () => {
-          URL.revokeObjectURL(url);
-          resolve(img);
+        const viaDataUrl = () => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error('Unreadable image'));
+            img.src = reader.result;
+          };
+          reader.onerror = () => reject(reader.error || new Error('Read failed'));
+          reader.readAsDataURL(file);
         };
-        img.onerror = reject;
-        img.src = url;
+        const viaObjectUrl = () => {
+          const url = URL.createObjectURL(file);
+          const img = new Image();
+          img.onload = () => {
+            URL.revokeObjectURL(url);
+            resolve(img);
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(url);
+            viaDataUrl();
+          };
+          img.src = url;
+        };
+        if (typeof createImageBitmap === 'function') {
+          createImageBitmap(file)
+            .then((bmp) => {
+              const c = document.createElement('canvas');
+              c.width = bmp.width;
+              c.height = bmp.height;
+              c.getContext('2d').drawImage(bmp, 0, 0);
+              if (bmp.close) bmp.close();
+              const img = new Image();
+              img.onload = () => resolve(img);
+              img.onerror = reject;
+              img.src = c.toDataURL('image/jpeg', 0.85);
+            })
+            .catch(viaObjectUrl);
+        } else {
+          viaObjectUrl();
+        }
       });
     }
 
@@ -951,7 +984,19 @@
       }
 
       return new Promise((resolve) => {
-        canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.7);
+        canvas.toBlob(
+          (blob) => {
+            if (blob) resolve(blob);
+            else {
+              fetch(canvas.toDataURL('image/jpeg', 0.7))
+                .then((r) => r.blob())
+                .then(resolve)
+                .catch(() => resolve(null));
+            }
+          },
+          'image/jpeg',
+          0.7
+        );
       });
     }
 
@@ -1081,25 +1126,43 @@
     }
 
     async function setPendingReceiptFromFiles(fileList) {
-      if (!fileList || !fileList.length) return;
-      await deleteDraftReceiptIfNeeded();
-      pendingSourceFiles.push(...fileList);
-      const blob = await stitchAndCompress(pendingSourceFiles);
-      pendingReceiptBlob = blob;
-      pendingReceiptId = uuid();
-      if (pendingReceiptObjectUrl) URL.revokeObjectURL(pendingReceiptObjectUrl);
-      pendingReceiptObjectUrl = URL.createObjectURL(blob);
-      await persistPendingReceiptToIDB();
-      renderReceiptPreview();
-      $('btnScan').disabled = false;
-      $('ocrStatus').textContent = 'Receipt saved — tap the image to preview, or Scan for line items.';
+      const files = fileList ? Array.from(fileList) : [];
+      if (!files.length) return;
+      $('ocrStatus').textContent = 'Saving receipt photo…';
+      try {
+        await deleteDraftReceiptIfNeeded();
+        pendingSourceFiles.push(...files);
+        const blob = await stitchAndCompress(pendingSourceFiles);
+        if (!blob || !blob.size) {
+          $('ocrStatus').textContent = 'Could not save that photo — try Add images or a smaller picture.';
+          return;
+        }
+        pendingReceiptBlob = blob;
+        if (!pendingReceiptId) pendingReceiptId = uuid();
+        if (pendingReceiptObjectUrl) URL.revokeObjectURL(pendingReceiptObjectUrl);
+        pendingReceiptObjectUrl = URL.createObjectURL(blob);
+        await persistPendingReceiptToIDB();
+        renderReceiptPreview();
+        $('btnScan').disabled = false;
+        $('ocrStatus').textContent = 'Receipt ready — tap Save on the expense to keep it.';
 
-      const shop = $('shop').value;
-      const what = $('what').value;
-      const suggested = suggestCategory(shop, what, '');
-      if ($('categorySelect').value === 'other' || !$('categorySelect').value) {
-        setCategory(suggested);
+        const shop = $('shop').value;
+        const what = $('what').value;
+        const suggested = suggestCategory(shop, what, '');
+        if ($('categorySelect').value === 'other' || !$('categorySelect').value) {
+          setCategory(suggested);
+        }
+      } catch (err) {
+        console.error(err);
+        $('ocrStatus').textContent = 'Photo failed — try again or use Add images.';
       }
+    }
+
+    async function handleReceiptFileInput(input) {
+      const files = input.files ? Array.from(input.files) : [];
+      input.value = '';
+      if (!files.length) return;
+      await setPendingReceiptFromFiles(files);
     }
 
     // ——— OCR (user-initiated only) ———
@@ -1549,15 +1612,18 @@
         lastOcrItems = [];
         lastOcrText = '';
         receiptMarkedForRemoval = false;
-      } else if (pendingReceiptBlob) {
+      } else if (pendingReceiptBlob || pendingReceiptId) {
         const rid = pendingReceiptId || uuid();
-        await putReceipt(rid, pendingReceiptBlob);
-        if (existing && existing.receiptId && existing.receiptId !== rid) {
-          await deleteReceipt(existing.receiptId);
-          revokeThumbCache(existing.receiptId);
+        const blob = pendingReceiptBlob || (await getReceipt(rid));
+        if (blob && blob.size) {
+          await putReceipt(rid, blob);
+          if (existing && existing.receiptId && existing.receiptId !== rid) {
+            await deleteReceipt(existing.receiptId);
+            revokeThumbCache(existing.receiptId);
+          }
+          receiptId = rid;
+          revokeThumbCache(rid);
         }
-        receiptId = rid;
-        revokeThumbCache(rid);
       }
 
       const entry = {
@@ -1761,14 +1827,8 @@
       $('btnRemoveReceipt').addEventListener('click', () => removeReceiptPhoto());
       $('btnCamera').addEventListener('click', () => $('cameraInput').click());
       $('btnPickFiles').addEventListener('click', () => $('fileInput').click());
-      $('fileInput').addEventListener('change', (e) => {
-        if (e.target.files.length) setPendingReceiptFromFiles(e.target.files);
-        e.target.value = '';
-      });
-      $('cameraInput').addEventListener('change', (e) => {
-        if (e.target.files.length) setPendingReceiptFromFiles(e.target.files);
-        e.target.value = '';
-      });
+      $('fileInput').addEventListener('change', (e) => handleReceiptFileInput(e.target));
+      $('cameraInput').addEventListener('change', (e) => handleReceiptFileInput(e.target));
       $('shop').addEventListener('blur', onFieldBlurSuggest);
       $('what').addEventListener('blur', onFieldBlurSuggest);
       $('btnDeleteExpense').addEventListener('click', () => {
