@@ -83,6 +83,41 @@
     }
     .icon-btn:active { transform: scale(0.96); }
 
+    .period-pills {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .period-pill {
+      flex: 1;
+      min-width: 0;
+      min-height: 44px;
+      padding: 10px 8px;
+      border-radius: 99px;
+      border: 1px solid #e2e8f0;
+      font-size: 0.8rem;
+      font-weight: 600;
+      background: var(--card);
+      color: var(--muted);
+      box-shadow: 0 2px 8px rgba(30, 41, 59, 0.04);
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .period-pill.selected {
+      background: var(--coral-soft);
+      border-color: var(--coral);
+      color: var(--coral-hover);
+    }
+  .budget-hint {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin: 0 0 12px;
+      padding: 10px 14px;
+      background: var(--card);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
     .card {
       background: var(--card);
       border-radius: var(--radius);
@@ -511,6 +546,11 @@
 <body>
   <div id="panelHome" class="panel-home">
     <header class="header">
+      <div class="period-pills" role="tablist" aria-label="Spending period">
+        <button type="button" class="period-pill" data-period="week" role="tab" aria-selected="false">This week</button>
+        <button type="button" class="period-pill selected" data-period="month" role="tab" aria-selected="true">This month</button>
+        <button type="button" class="period-pill" data-period="year" role="tab" aria-selected="false">This year</button>
+      </div>
       <div class="header-top">
         <div>
           <div class="month-label" id="monthLabel">This month</div>
@@ -520,6 +560,8 @@
         <button type="button" class="icon-btn" id="btnSummary" title="Summary" aria-label="Summary">📊</button>
       </div>
     </header>
+
+    <p class="budget-hint" id="budgetHint" hidden>Budget applies to calendar month — switch to This month to track it.</p>
 
     <div class="card" id="budgetCard" hidden>
       <div class="budget-row">
@@ -696,7 +738,8 @@
 
     // ——— State ———
     let expenses = [];
-    let settings = { monthlyBudget: null };
+    let settings = { monthlyBudget: null, heroPeriod: 'month' };
+    const HERO_PERIODS = ['week', 'month', 'year'];
     let pendingReceiptBlob = null;
     let pendingReceiptObjectUrl = null;
     let pendingReceiptId = null;
@@ -744,9 +787,10 @@
     function loadSettings() {
       try {
         const raw = localStorage.getItem(SETTINGS_KEY);
-        settings = raw ? JSON.parse(raw) : { monthlyBudget: null };
+        const parsed = raw ? JSON.parse(raw) : { monthlyBudget: null };
+        settings = { monthlyBudget: parsed.monthlyBudget ?? null, heroPeriod: HERO_PERIODS.includes(parsed.heroPeriod) ? parsed.heroPeriod : 'month' };
       } catch {
-        settings = { monthlyBudget: null };
+        settings = { monthlyBudget: null, heroPeriod: 'month' };
       }
     }
 
@@ -1137,30 +1181,98 @@
       return dateStr.slice(0, 7);
     }
 
+    function toISODate(d) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+
+    /** ISO week: Monday–Sunday (UK-style), relative to ref (default today). */
+    function mondayOfISOWeek(ref) {
+      const date = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate());
+      const dow = date.getDay();
+      const shift = dow === 0 ? -6 : 1 - dow;
+      date.setDate(date.getDate() + shift);
+      return date;
+    }
+
+    function getPeriodRange(period, ref = new Date()) {
+      if (period === 'week') {
+        const fromD = mondayOfISOWeek(ref);
+        const toD = new Date(fromD);
+        toD.setDate(toD.getDate() + 6);
+        const label = `Week of ${fromD.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+        return { from: toISODate(fromD), to: toISODate(toD), label };
+      }
+      if (period === 'year') {
+        const y = ref.getFullYear();
+        const fromD = new Date(y, 0, 1);
+        const toD = new Date(y, 11, 31);
+        return { from: toISODate(fromD), to: toISODate(toD), label: String(y) };
+      }
+      const fromD = new Date(ref.getFullYear(), ref.getMonth(), 1);
+      const toD = new Date(ref.getFullYear(), ref.getMonth() + 1, 0);
+      const label = ref.toLocaleString('en-GB', { month: 'long', year: 'numeric' });
+      return { from: toISODate(fromD), to: toISODate(toD), label };
+    }
+
     function sumInRange(from, to) {
       return expenses
         .filter((e) => e.date >= from && e.date <= to)
         .reduce((s, e) => s + Number(e.amount), 0);
     }
 
+    function syncPeriodPills() {
+      const period = settings.heroPeriod || 'month';
+      document.querySelectorAll('.period-pill').forEach((btn) => {
+        const on = btn.dataset.period === period;
+        btn.classList.toggle('selected', on);
+        btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+    }
+
+    function setHeroPeriod(period) {
+      if (!HERO_PERIODS.includes(period)) return;
+      settings.heroPeriod = period;
+      saveSettings();
+      syncPeriodPills();
+      renderHero();
+    }
+
     function renderHero() {
-      const now = new Date();
-      const mk = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const monthSpend = expenses.filter((e) => monthKey(e.date) === mk).reduce((s, e) => s + Number(e.amount), 0);
+      const period = settings.heroPeriod || 'month';
+      const range = getPeriodRange(period);
+      const periodSpend = sumInRange(range.from, range.to);
       const all = expenses.reduce((s, e) => s + Number(e.amount), 0);
-      $('monthLabel').textContent = now.toLocaleString('en-GB', { month: 'long', year: 'numeric' });
-      $('monthTotal').textContent = formatGBP(monthSpend);
+      $('monthLabel').textContent = range.label;
+      $('monthTotal').textContent = formatGBP(periodSpend);
       $('allTimeLabel').textContent = 'All time: ' + formatGBP(all);
 
       const budget = settings.monthlyBudget;
       const card = $('budgetCard');
-      if (budget != null && budget > 0) {
-        card.hidden = false;
-        const pct = Math.min(100, (monthSpend / budget) * 100);
-        $('budgetFill').style.width = pct + '%';
-        $('budgetText').textContent = `${formatGBP(monthSpend)} of ${formatGBP(budget)}`;
+      const hint = $('budgetHint');
+      const now = new Date();
+      const mk = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const monthSpend = expenses.filter((e) => monthKey(e.date) === mk).reduce((s, e) => s + Number(e.amount), 0);
+
+      if (period === 'month') {
+        hint.hidden = true;
+        if (budget != null && budget > 0) {
+          card.hidden = false;
+          const pct = Math.min(100, (monthSpend / budget) * 100);
+          $('budgetFill').style.width = pct + '%';
+          $('budgetText').textContent = `${formatGBP(monthSpend)} of ${formatGBP(budget)}`;
+        } else {
+          card.hidden = true;
+        }
       } else {
         card.hidden = true;
+        if (budget != null && budget > 0) {
+          hint.hidden = false;
+        } else {
+          hint.hidden = true;
+        }
       }
     }
 
@@ -1498,10 +1610,9 @@
       $('panelHome').classList.add('panel-hidden');
       $('panelSummary').classList.add('active');
       $('fabAdd').style.display = 'none';
-      const now = new Date();
-      const start = new Date(now.getFullYear(), now.getMonth(), 1);
-      $('sumFrom').value = start.toISOString().slice(0, 10);
-      $('sumTo').value = todayISO();
+      const range = getPeriodRange(settings.heroPeriod || 'month');
+      $('sumFrom').value = range.from;
+      $('sumTo').value = range.to;
       $('budgetInput').value = settings.monthlyBudget ?? '';
       renderSummary();
     }
@@ -1641,6 +1752,9 @@
       $('btnUndo').addEventListener('click', undoDelete);
       $('btnSummary').addEventListener('click', showSummary);
       $('btnBackHome').addEventListener('click', showHome);
+      document.querySelectorAll('.period-pill').forEach((btn) => {
+        btn.addEventListener('click', () => setHeroPeriod(btn.dataset.period));
+      });
       $('sumFrom').addEventListener('change', renderSummary);
       $('sumTo').addEventListener('change', renderSummary);
       $('btnExportCsv').addEventListener('click', exportCsv);
@@ -1658,6 +1772,7 @@
       initCategoryUI();
       bindEvents();
       await openIDB();
+      syncPeriodPills();
       renderHero();
       renderList();
       registerSW();
